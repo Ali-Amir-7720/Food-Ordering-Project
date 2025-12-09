@@ -1,7 +1,8 @@
 #pragma once
-#pragma once
 #ifndef QUEUE_H
 #define QUEUE_H
+#include <stdexcept>
+using namespace std;
 
 template<typename T>
 class Queue {
@@ -12,12 +13,18 @@ private:
         Node(const T& d) : data(d), next(nullptr) {}
     };
 
-    Node* front;
-    Node* rear;
+    Node* frontPtr;
+    Node* rearPtr;
     int count;
 
 public:
-    Queue() : front(nullptr), rear(nullptr), count(0) {}
+    Queue() : frontPtr(nullptr), rearPtr(nullptr), count(0) {}
+
+    ~Queue() {
+        while (!isEmpty()) {
+            dequeue();
+        }
+    }
 
     bool isEmpty() const {
         return count == 0;
@@ -29,12 +36,12 @@ public:
 
     void enqueue(const T& val) {
         Node* newNode = new Node(val);
-        if (rear == nullptr) {
-            front = rear = newNode;
+        if (rearPtr == nullptr) {
+            frontPtr = rearPtr = newNode;
         }
         else {
-            rear->next = newNode;
-            rear = newNode;
+            rearPtr->next = newNode;
+            rearPtr = newNode;
         }
         count++;
     }
@@ -43,11 +50,11 @@ public:
         if (isEmpty()) {
             throw out_of_range("Queue empty");
         }
-        Node* temp = front;
+        Node* temp = frontPtr;
         T val = temp->data;
-        front = front->next;
-        if (!front) {
-            rear = nullptr;
+        frontPtr = frontPtr->next;
+        if (!frontPtr) {
+            rearPtr = nullptr;
         }
         delete temp;
         count--;
@@ -56,11 +63,29 @@ public:
 
     T front() const {
         if (isEmpty()) {
-            throw std::out_of_range("Queue empty");
+            throw out_of_range("Queue empty");
         }
-        return front->data;
+        return frontPtr->data;
+    }
+    
+    T peek() const {
+        return front();
+    }
+     void traverse(function<void(const T&)> func) const {
+        Node* current = front;
+        while (current != nullptr) {
+            func(current->data);
+            current = current->next;
+        }
+    }
+    
+    void traverse(function<void(T&)> func) {
+        Node* current = front;
+        while (current != nullptr) {
+            func(current->data);
+            current = current->next;
+        }
     }
 };
 
 #endif
-
