@@ -1,4 +1,3 @@
-#pragma once
 #include <iostream>
 #include <fstream>
 #include <cstring>
@@ -6,9 +5,13 @@
 #include <queue>
 #include <sstream>
 #include <vector>
+#include <functional>
+
 using namespace std;
+
+// Configuration
 const int BLOCK_SIZE = 4096;
-const int MIN_DEGREE = 3;
+const int MIN_DEGREE = 3;           // t
 const int MAX_KEYS = 2 * MIN_DEGREE - 1;
 const int MIN_KEYS = MIN_DEGREE - 1;
 
@@ -20,32 +23,38 @@ struct SuperBlock {
 };
 #pragma pack(pop)
 
+template<typename T>
 class BTreeNode {
 public:
     bool is_leaf;
     int key_count;
     int disk_index;
 
-    int keys[MAX_KEYS];
+    T keys[MAX_KEYS];
     int children[MAX_KEYS + 1];           // disk indices
-    BTreeNode* mem_children[MAX_KEYS + 1]; // in-memory pointers
+    BTreeNode<T>* mem_children[MAX_KEYS + 1]; // in-memory pointers
 
     BTreeNode(bool leaf = true) {
         is_leaf = leaf;
         key_count = 0;
         disk_index = -1;
-        for (int i = 0; i < MAX_KEYS; ++i) keys[i] = INT_MIN;
+        for (int i = 0; i < MAX_KEYS; ++i) keys[i] = T();
         for (int i = 0; i <= MAX_KEYS; ++i) children[i] = -1;
         for (int i = 0; i <= MAX_KEYS; ++i) mem_children[i] = nullptr;
     }
 };
 
+template<typename T>
 class PersistentBTree {
 private:
     string filename;
     fstream file;
     SuperBlock superblock;
-    BTreeNode* root;
+    BTreeNode<T>* root;
+    
+    // Comparison functions - must be provided by user
+    function<bool(const T&, const T&)> compare;
+    function<bool(const T&, const T&)> equal;
 
     // ---------- Bitmap helpers ----------
     inline void set_bitmap_bit(int idx, bool val) {
@@ -77,7 +86,7 @@ private:
     }
 
     // ---------- Serialization ----------
-    void serialize_node(const BTreeNode* node, char* buffer) {
+    void serialize_node(const BTreeNode<T>* node, char* buffer) {
         memset(buffer, 0, BLOCK_SIZE);
         int offset = 0;
 
@@ -90,18 +99,25 @@ private:
         memcpy(buffer + offset, &node->disk_index, sizeof(node->disk_index));
         offset += sizeof(node->disk_index);
 
-        for (int i = 0; i < MAX_KEYS; ++i) {
-            memcpy(buffer + offset, &node->keys[i], sizeof(int));
-            offset += sizeof(int);
+        // Serialize keys
+        for (int i = 0; i < node->key_count; ++i) {
+            // For primitive types, use memcpy
+            memcpy(buffer + offset, &node->keys[i], sizeof(T));
+            offset += sizeof(T);
         }
+        
+        // Skip empty key slots
+        for (int i = node->key_count; i < MAX_KEYS; ++i) {
+            offset += sizeof(T);
+        }
+
         for (int i = 0; i <= MAX_KEYS; ++i) {
             memcpy(buffer + offset, &node->children[i], sizeof(int));
             offset += sizeof(int);
         }
-        // rest of block unused
     }
 
-    void deserialize_node(BTreeNode* node, const char* buffer, int block_index) {
+    void deserialize_node(BTreeNode<T>* node, const char* buffer, int block_index) {
         int offset = 0;
 
         memcpy(&node->is_leaf, buffer + offset, sizeof(node->is_leaf));
@@ -113,10 +129,17 @@ private:
         memcpy(&node->disk_index, buffer + offset, sizeof(node->disk_index));
         offset += sizeof(node->disk_index);
 
-        for (int i = 0; i < MAX_KEYS; ++i) {
-            memcpy(&node->keys[i], buffer + offset, sizeof(int));
-            offset += sizeof(int);
+        // Deserialize keys
+        for (int i = 0; i < node->key_count; ++i) {
+            memcpy(&node->keys[i], buffer + offset, sizeof(T));
+            offset += sizeof(T);
         }
+        
+        // Skip empty key slots
+        for (int i = node->key_count; i < MAX_KEYS; ++i) {
+            offset += sizeof(T);
+        }
+
         for (int i = 0; i <= MAX_KEYS; ++i) {
             memcpy(&node->children[i], buffer + offset, sizeof(int));
             offset += sizeof(int);
@@ -126,7 +149,7 @@ private:
         node->disk_index = block_index;
     }
 
-    void write_node(BTreeNode* node) {
+    void write_node(BTreeNode<T>* node) {
         if (node->disk_index < 0) return;
         char buffer[BLOCK_SIZE];
         serialize_node(node, buffer);
@@ -135,19 +158,19 @@ private:
         file.flush();
     }
 
-    BTreeNode* read_node(int block) {
+    BTreeNode<T>* read_node(int block) {
         if (block < 0) return nullptr;
         char buffer[BLOCK_SIZE];
         file.seekg((long long)block * BLOCK_SIZE, ios::beg);
         file.read(buffer, BLOCK_SIZE);
         if (!file.good()) return nullptr;
 
-        BTreeNode* node = new BTreeNode();
+        BTreeNode<T>* node = new BTreeNode<T>();
         deserialize_node(node, buffer, block);
         return node;
     }
 
-    int allocate_block_for_node(BTreeNode* node) {
+    int allocate_block_for_node(BTreeNode<T>* node) {
         int b = find_free_block();
 
         if (b == -1) {
@@ -174,17 +197,17 @@ private:
     }
 
     // ---------- B-Tree helpers ----------
-    void split_child(BTreeNode* parent, int index) {
-        BTreeNode* y = parent->mem_children[index];
+    void split_child(BTreeNode<T>* parent, int index) {
+        BTreeNode<T>* y = parent->mem_children[index];
         if (!y) return;
 
-        BTreeNode* z = new BTreeNode(y->is_leaf);
+        BTreeNode<T>* z = new BTreeNode<T>(y->is_leaf);
         z->key_count = MIN_DEGREE - 1;
 
         // move last t-1 keys of y to z
         for (int j = 0; j < MIN_DEGREE - 1; ++j) {
             z->keys[j] = y->keys[j + MIN_DEGREE];
-            y->keys[j + MIN_DEGREE] = INT_MIN;
+            y->keys[j + MIN_DEGREE] = T();
         }
 
         // move children if not leaf
@@ -216,7 +239,7 @@ private:
 
         // move median key up
         parent->keys[index] = y->keys[MIN_DEGREE - 1];
-        y->keys[MIN_DEGREE - 1] = INT_MIN;
+        y->keys[MIN_DEGREE - 1] = T();
 
         parent->key_count++;
 
@@ -226,11 +249,11 @@ private:
         write_node(parent);
     }
 
-    void insert_non_full(BTreeNode* node, int k) {
+    void insert_non_full(BTreeNode<T>* node, const T& k) {
         // Check for duplicate in this node
         for (int i = 0; i < node->key_count; ++i) {
-            if (node->keys[i] == k) {
-                cout << "ERROR: Duplicate key " << k << " detected during insertion.\n";
+            if (equal(node->keys[i], k)) {
+                cout << "ERROR: Duplicate key detected during insertion.\n";
                 return;
             }
         }
@@ -239,14 +262,14 @@ private:
 
         if (node->is_leaf) {
             // shift and insert
-            while (i >= 0 && node->keys[i] > k) {
+            while (i >= 0 && compare(k, node->keys[i])) {
                 node->keys[i + 1] = node->keys[i];
                 i--;
             }
 
             // Double-check we're not inserting a duplicate
-            if (i >= 0 && node->keys[i] == k) {
-                cout << "ERROR: Duplicate key " << k << " detected during insertion.\n";
+            if (i >= 0 && equal(node->keys[i], k)) {
+                cout << "ERROR: Duplicate key detected during insertion.\n";
                 return;
             }
 
@@ -255,7 +278,7 @@ private:
             write_node(node);
         }
         else {
-            while (i >= 0 && node->keys[i] > k) i--;
+            while (i >= 0 && compare(k, node->keys[i])) i--;
             i++;
 
             // ensure child loaded
@@ -264,7 +287,7 @@ private:
 
             if (!node->mem_children[i]) {
                 // child doesn't exist (shouldn't happen in proper tree) -> create
-                node->mem_children[i] = new BTreeNode(true);
+                node->mem_children[i] = new BTreeNode<T>(true);
                 allocate_block_for_node(node->mem_children[i]);
                 node->children[i] = node->mem_children[i]->disk_index;
                 write_node(node);
@@ -272,7 +295,7 @@ private:
 
             if (node->mem_children[i]->key_count == MAX_KEYS) {
                 split_child(node, i);
-                if (k > node->keys[i]) i++;
+                if (compare(node->keys[i], k)) i++;
             }
 
             if (!node->mem_children[i] && node->children[i] != -1)
@@ -283,58 +306,58 @@ private:
     }
 
     // ---------- Deletion Implementation ----------
-    int find_key(BTreeNode* node, int k) {
+    int find_key(BTreeNode<T>* node, const T& k) {
         int idx = 0;
-        while (idx < node->key_count && node->keys[idx] < k)
+        while (idx < node->key_count && compare(node->keys[idx], k))
             ++idx;
         return idx;
     }
 
-    void remove_from_leaf(BTreeNode* node, int idx) {
+    void remove_from_leaf(BTreeNode<T>* node, int idx) {
         for (int i = idx + 1; i < node->key_count; ++i)
             node->keys[i - 1] = node->keys[i];
         node->key_count--;
-        node->keys[node->key_count] = INT_MIN;  // Clear the last key
+        node->keys[node->key_count] = T();  // Clear the last key
 
         write_node(node);
     }
 
-    void remove_from_non_leaf(BTreeNode* node, int idx) {
-        int k = node->keys[idx];
+    void remove_from_non_leaf(BTreeNode<T>* node, int idx) {
+        T k = node->keys[idx];
 
         // Load left child if not in memory
         if (!node->mem_children[idx] && node->children[idx] != -1)
             node->mem_children[idx] = read_node(node->children[idx]);
-        BTreeNode* left_child = node->mem_children[idx];
+        BTreeNode<T>* left_child = node->mem_children[idx];
 
         // Load right child if not in memory  
         if (!node->mem_children[idx + 1] && node->children[idx + 1] != -1)
             node->mem_children[idx + 1] = read_node(node->children[idx + 1]);
-        BTreeNode* right_child = node->mem_children[idx + 1];
+        BTreeNode<T>* right_child = node->mem_children[idx + 1];
 
         if (left_child && left_child->key_count >= MIN_DEGREE) {
             // Case 2a: predecessor
-            BTreeNode* current = left_child;
+            BTreeNode<T>* current = left_child;
             while (!current->is_leaf) {
                 int last_idx = current->key_count;
                 if (!current->mem_children[last_idx] && current->children[last_idx] != -1)
                     current->mem_children[last_idx] = read_node(current->children[last_idx]);
                 current = current->mem_children[last_idx];
             }
-            int pred = current->keys[current->key_count - 1];
+            T pred = current->keys[current->key_count - 1];
             node->keys[idx] = pred;
             write_node(node);
             remove_rec(left_child, pred);
         }
         else if (right_child && right_child->key_count >= MIN_DEGREE) {
             // Case 2b: successor
-            BTreeNode* current = right_child;
+            BTreeNode<T>* current = right_child;
             while (!current->is_leaf) {
                 if (!current->mem_children[0] && current->children[0] != -1)
                     current->mem_children[0] = read_node(current->children[0]);
                 current = current->mem_children[0];
             }
-            int succ = current->keys[0];
+            T succ = current->keys[0];
             node->keys[idx] = succ;
             write_node(node);
             remove_rec(right_child, succ);
@@ -354,9 +377,9 @@ private:
         }
     }
 
-    void borrow_from_prev(BTreeNode* node, int idx) {
-        BTreeNode* child = node->mem_children[idx];
-        BTreeNode* sibling = node->mem_children[idx - 1];
+    void borrow_from_prev(BTreeNode<T>* node, int idx) {
+        BTreeNode<T>* child = node->mem_children[idx];
+        BTreeNode<T>* sibling = node->mem_children[idx - 1];
 
         // Shift child keys right
         for (int i = child->key_count - 1; i >= 0; --i)
@@ -388,9 +411,9 @@ private:
         write_node(node);
     }
 
-    void borrow_from_next(BTreeNode* node, int idx) {
-        BTreeNode* child = node->mem_children[idx];
-        BTreeNode* sibling = node->mem_children[idx + 1];
+    void borrow_from_next(BTreeNode<T>* node, int idx) {
+        BTreeNode<T>* child = node->mem_children[idx];
+        BTreeNode<T>* sibling = node->mem_children[idx + 1];
 
         // Move key from node to child
         child->keys[child->key_count] = node->keys[idx];
@@ -421,9 +444,9 @@ private:
         write_node(node);
     }
 
-    void merge_nodes(BTreeNode* node, int idx) {
-        BTreeNode* child = node->mem_children[idx];
-        BTreeNode* sibling = node->mem_children[idx + 1];
+    void merge_nodes(BTreeNode<T>* node, int idx) {
+        BTreeNode<T>* child = node->mem_children[idx];
+        BTreeNode<T>* sibling = node->mem_children[idx + 1];
 
         // Move key from parent down to child
         child->keys[MIN_DEGREE - 1] = node->keys[idx];
@@ -457,7 +480,7 @@ private:
 
         // Clear sibling's keys and pointers (important!)
         for (int i = 0; i < sibling->key_count; ++i)
-            sibling->keys[i] = INT_MIN;
+            sibling->keys[i] = T();
         for (int i = 0; i <= sibling->key_count; ++i) {
             sibling->children[i] = -1;
             sibling->mem_children[i] = nullptr;
@@ -472,12 +495,11 @@ private:
         write_node(node);
     }
 
-
-    void fill_child(BTreeNode* node, int idx) {
+    void fill_child(BTreeNode<T>* node, int idx) {
         // Load child if not in memory
         if (!node->mem_children[idx] && node->children[idx] != -1)
             node->mem_children[idx] = read_node(node->children[idx]);
-        BTreeNode* child = node->mem_children[idx];
+        BTreeNode<T>* child = node->mem_children[idx];
 
         if (!child) return;
 
@@ -485,7 +507,7 @@ private:
             // Load left sibling if not in memory
             if (!node->mem_children[idx - 1] && node->children[idx - 1] != -1)
                 node->mem_children[idx - 1] = read_node(node->children[idx - 1]);
-            BTreeNode* left_sibling = node->mem_children[idx - 1];
+            BTreeNode<T>* left_sibling = node->mem_children[idx - 1];
 
             if (left_sibling && left_sibling->key_count >= MIN_DEGREE) {
                 borrow_from_prev(node, idx);
@@ -497,7 +519,7 @@ private:
             // Load right sibling if not in memory
             if (!node->mem_children[idx + 1] && node->children[idx + 1] != -1)
                 node->mem_children[idx + 1] = read_node(node->children[idx + 1]);
-            BTreeNode* right_sibling = node->mem_children[idx + 1];
+            BTreeNode<T>* right_sibling = node->mem_children[idx + 1];
 
             if (right_sibling && right_sibling->key_count >= MIN_DEGREE) {
                 borrow_from_next(node, idx);
@@ -514,17 +536,15 @@ private:
             // Can merge with right sibling  
             merge_nodes(node, idx);
         }
-        // Note: If we reach here and can't merge, the tree is in an invalid state
-        // but this shouldn't happen in a proper B-tree
     }
 
-    void remove_rec(BTreeNode* node, int k) {
+    void remove_rec(BTreeNode<T>* node, const T& k) {
         if (!node) return;
 
         int idx = find_key(node, k);
 
         // Key found in this node
-        if (idx < node->key_count && node->keys[idx] == k) {
+        if (idx < node->key_count && equal(node->keys[idx], k)) {
             if (node->is_leaf) {
                 remove_from_leaf(node, idx);
             }
@@ -538,7 +558,7 @@ private:
             // Load child if not in memory
             if (!node->mem_children[idx] && node->children[idx] != -1)
                 node->mem_children[idx] = read_node(node->children[idx]);
-            BTreeNode* child = node->mem_children[idx];
+            BTreeNode<T>* child = node->mem_children[idx];
 
             if (!child) return;
 
@@ -560,7 +580,7 @@ private:
         }
     }
 
-    void cleanup_mem(BTreeNode* node) {
+    void cleanup_mem(BTreeNode<T>* node) {
         if (!node) return;
         for (int i = 0; i <= node->key_count; ++i) {
             if (node->mem_children[i]) {
@@ -571,8 +591,34 @@ private:
         }
     }
 
+    // Simple traversal to get all keys
+    void getAllKeysRec(BTreeNode<T>* node, vector<T>& result) {
+        if (!node) return;
+        
+        for (int i = 0; i < node->key_count; ++i) {
+            if (!node->is_leaf && node->children[i] != -1) {
+                if (!node->mem_children[i]) {
+                    node->mem_children[i] = read_node(node->children[i]);
+                }
+                getAllKeysRec(node->mem_children[i], result);
+            }
+            result.push_back(node->keys[i]);
+        }
+        
+        if (!node->is_leaf && node->children[node->key_count] != -1) {
+            if (!node->mem_children[node->key_count]) {
+                node->mem_children[node->key_count] = read_node(node->children[node->key_count]);
+            }
+            getAllKeysRec(node->mem_children[node->key_count], result);
+        }
+    }
+
 public:
-    PersistentBTree(const string& fname) : filename(fname), root(nullptr) {
+    PersistentBTree(const string& fname, 
+                    function<bool(const T&, const T&)> comp,
+                    function<bool(const T&, const T&)> eq)
+        : filename(fname), root(nullptr), compare(comp), equal(eq) {
+        
         bool file_exists = false;
         {
             ifstream f(fname, ios::binary);
@@ -596,7 +642,7 @@ public:
         if (!file.good() || superblock.total_blocks < 1 || superblock.root_block < 0) {
             initialize_superblock();
             // create empty root
-            root = new BTreeNode(true);
+            root = new BTreeNode<T>(true);
             allocate_block_for_node(root);
             superblock.root_block = root->disk_index;
             write_superblock();
@@ -608,7 +654,7 @@ public:
             }
             else {
                 // fallback: create new root
-                root = new BTreeNode(true);
+                root = new BTreeNode<T>(true);
                 allocate_block_for_node(root);
                 superblock.root_block = root->disk_index;
                 write_superblock();
@@ -637,22 +683,22 @@ public:
         write_superblock();
     }
 
-    void insert(int key) {
+    void insert(const T& key) {
         // Check if key already exists
         if (search(key).first) {
-            cout << "ERROR: Key " << key << " already exists in B-tree.\n";
+            cout << "ERROR: Key already exists in B-tree.\n";
             return;
         }
 
         if (!root) {
-            root = new BTreeNode(true);
+            root = new BTreeNode<T>(true);
             allocate_block_for_node(root);
             superblock.root_block = root->disk_index;
             write_superblock();
         }
 
         if (root->key_count == MAX_KEYS) {
-            BTreeNode* s = new BTreeNode(false);
+            BTreeNode<T>* s = new BTreeNode<T>(false);
             allocate_block_for_node(s);
             s->children[0] = root->disk_index;
             s->mem_children[0] = root;
@@ -663,17 +709,17 @@ public:
         }
 
         insert_non_full(root, key);
-        cout << "Inserted value " << key << " into B-tree.\n";
+        cout << "Inserted value into B-tree.\n";
     }
 
-    void remove(int key) {
+    void remove(const T& key) {
         if (!root) return;
 
         remove_rec(root, key);
 
         // If root becomes empty after deletion
         if (root->key_count == 0) {
-            BTreeNode* old_root = root;
+            BTreeNode<T>* old_root = root;
             if (!root->is_leaf) {
                 // Make first child the new root
                 if (root->children[0] != -1) {
@@ -698,38 +744,61 @@ public:
         }
     }
 
-    pair<bool, vector<int>> search(int key) {
-        vector<int> path;
-        bool found = search_rec(root, key, path);
-        return { found, path };
+    pair<bool, vector<T>> search(const T& key) {
+        vector<T> result;
+        bool found = search_rec(root, key, result);
+        return { found, result };
     }
 
-    bool search_rec(BTreeNode* node, int key, vector<int>& path) {
+    bool search_rec(BTreeNode<T>* node, const T& key, vector<T>& result) {
         if (!node) return false;
-        path.push_back(node->disk_index);
 
         int i = 0;
-        while (i < node->key_count && key > node->keys[i]) i++;
+        while (i < node->key_count && compare(node->keys[i], key)) i++;
 
-        if (i < node->key_count && node->keys[i] == key) return true;
+        if (i < node->key_count && equal(node->keys[i], key)) {
+            result.push_back(node->keys[i]);
+            return true;
+        }
         if (node->is_leaf) return false;
 
         if (!node->mem_children[i] && node->children[i] != -1)
             node->mem_children[i] = read_node(node->children[i]);
 
-        return search_rec(node->mem_children[i], key, path);
+        return search_rec(node->mem_children[i], key, result);
+    }
+
+    // Get all keys (for loading into cache)
+    vector<T> getAllKeys() {
+        vector<T> result;
+        getAllKeysRec(root, result);
+        return result;
+    }
+
+    bool isEmpty() const {
+        return !root || root->key_count == 0;
+    }
+
+    void clear() {
+        if (root) {
+            cleanup_mem(root);
+            delete root;
+            root = nullptr;
+        }
+        superblock.root_block = -1;
+        write_superblock();
     }
 
     void print_tree() {
         if (!root) { cout << "Tree empty\n"; return; }
 
-        queue<pair<BTreeNode*, int>> q;
+        queue<pair<BTreeNode<T>*, int>> q;
         q.push({ root, 0 });
         int level = -1;
 
         while (!q.empty()) {
             auto pr = q.front(); q.pop();
-            BTreeNode* node = pr.first;
+            BTreeNode<T>* node = pr.first;
             int lvl = pr.second;
 
             if (lvl != level) {
