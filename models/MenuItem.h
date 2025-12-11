@@ -86,8 +86,6 @@ public:
         memcpy(&restaurantId, buffer + offset, sizeof(restaurantId));
         offset += sizeof(restaurantId);
     }
-    
-    // Conversion back to string
     string getName() const { return string(name); }
     string getDescription() const { return string(description); }
     string getCategory() const { return string(category); }

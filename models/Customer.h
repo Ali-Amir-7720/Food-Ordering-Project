@@ -14,10 +14,9 @@ public:
     string name;
     string address;
     string phone;
-    vector<int> orderHistory;        // store order IDs
-    vector<int> favoriteItems;       // store MenuItem IDs
-    vector<int> favoriteRestaurants; // store Restaurant IDs
-
+    vector<int> orderHistory;       
+    vector<int> favoriteItems;       
+    vector<int> favoriteRestaurants; 
     Customer() : customerID(-1), name(""), address(""), phone("") {}
 
     Customer(int id, const string& n, const string& addr, const string& ph)
