@@ -11,13 +11,11 @@ public:
     int id;
     char name[100];
     char phone[20];
-    char vehicle[20];  // "bike", "motorcycle", "car"
-    int location;      // Graph node ID
-    char status[20];   // "available", "busy", "offline"
+    char vehicle[20];  
+    int location;      
+    char status[20];   
     double rating;
     int completedDeliveries;
-    
-    // Default constructor
     Rider() : id(0), location(0), rating(0.0), completedDeliveries(0) {
         memset(name, 0, sizeof(name));
         memset(phone, 0, sizeof(phone));
@@ -26,8 +24,6 @@ public:
         strcpy(status, "available");
         strcpy(vehicle, "bike");
     }
-    
-    // Simple constructor for initialization
     Rider(int _id, const string& _name, const string& _status)
         : id(_id), location(0), rating(0.0), completedDeliveries(0) {
         
@@ -42,7 +38,6 @@ public:
         status[sizeof(status) - 1] = '\0';
     }
     
-    // Full constructor
     Rider(int _id, const string& _name, const string& _phone, 
           const string& _vehicle, int _location)
         : id(_id), location(_location), rating(0.0), completedDeliveries(0) {
@@ -59,7 +54,6 @@ public:
         strcpy(status, "available");
     }
     
-    // Helper methods
     string getName() const { return string(name); }
     string getStatus() const { return string(status); }
     string getPhone() const { return string(phone); }

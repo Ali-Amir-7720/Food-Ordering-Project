@@ -34,8 +34,6 @@ public:
         description[sizeof(description)-1] = '\0';
         category[sizeof(category)-1] = '\0';
     }
-    
-    // Serialization method
     void serialize(char* buffer) const {
         int offset = 0;
         
@@ -60,8 +58,6 @@ public:
         memcpy(buffer + offset, &restaurantId, sizeof(restaurantId));
         offset += sizeof(restaurantId);
     }
-    
-    // Deserialization method
     void deserialize(const char* buffer) {
         int offset = 0;
         
