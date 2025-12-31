@@ -46,7 +46,6 @@ private:
     }
     
 public:
-    // Save/Load locations
     bool saveAllLocations(const vector<LocationData>& locations) {
         return saveAllToFile(LOCATIONS_FILE, locations);
     }

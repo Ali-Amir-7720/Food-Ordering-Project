@@ -1,3 +1,4 @@
+
 #pragma once
 #ifndef USER_H
 #define USER_H
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <fstream>
 #include "../dataStructures/HashTable.h"
 #include "../dataStructures/LinkedList.h"
 
@@ -18,9 +20,9 @@ struct UserData {
     char name[100];
     char email[100];
     char phone[20];
-    char role[30];     
+    char role[30]; // "customer", "rider", "restaurant_owner", "admin"
     char address[200];
-    char password[50];  
+    char password[100]; // For authentication (in real system, would be hashed)
     
     UserData() : id(0) {
         memset(name, 0, sizeof(name));
@@ -32,11 +34,10 @@ struct UserData {
         strcpy(role, "customer");
     }
     
-    // Constructor with parameters
     UserData(int i, const string& n, const string& e, const string& p, 
-             const string& pass, const string& r = "customer", const string& a = "")
+             const string& r = "customer", const string& a = "", 
+             const string& pass = "")
         : id(i) {
-        
         strncpy(name, n.c_str(), sizeof(name) - 1);
         name[sizeof(name) - 1] = '\0';
         
@@ -46,24 +47,15 @@ struct UserData {
         strncpy(phone, p.c_str(), sizeof(phone) - 1);
         phone[sizeof(phone) - 1] = '\0';
         
-        strncpy(password, pass.c_str(), sizeof(password) - 1);
-        password[sizeof(password) - 1] = '\0';
-        
         strncpy(role, r.c_str(), sizeof(role) - 1);
         role[sizeof(role) - 1] = '\0';
         
         strncpy(address, a.c_str(), sizeof(address) - 1);
         address[sizeof(address) - 1] = '\0';
+        
+        strncpy(password, pass.c_str(), sizeof(password) - 1);
+        password[sizeof(password) - 1] = '\0';
     }
-    
-    // Helper methods to get string versions
-    string getName() const { return string(name); }
-    string getEmail() const { return string(email); }
-    string getPhone() const { return string(phone); }
-    string getPassword() const { return string(password); }
-    string getRole() const { return string(role); }
-    string getAddress() const { return string(address); }
-    int getUserId() const { return id; }
     
     bool operator==(const UserData& other) const {
         return id == other.id;
@@ -119,6 +111,14 @@ struct UserData {
         password[sizeof(password) - 1] = '\0';
     }
     
+    int getUserId() const { return id; }
+    string getName() const { return string(name); }
+    string getEmail() const { return string(email); }
+    string getPassword() const { return string(password); }
+    string getAddress() const { return string(address); }
+    string getPhone() const { return string(phone); }
+    string getRole() const { return string(role); }
+    
     void displayUserInfo() const {
         cout << "Name: " << name << "\n";
         cout << "Email: " << email << "\n";
@@ -145,18 +145,25 @@ struct UserData {
             address[sizeof(address) - 1] = '\0';
         }
     }
+    
+void setRole(const string& newRole) {
+    strncpy(role, newRole.c_str(), sizeof(role) - 1);
+    role[sizeof(role) - 1] = '\0';
+}
 };
 
 class UserManager {
 private:
-    HashTable<UserData> users;
+    HashTable<UserData> users; // key = user ID
     
 public:
     UserManager() {}
     
     ~UserManager() {
+        // HashTable handles its own cleanup
     }
     
+    // Register a new user
     bool registerUser(int id, const string& name, const string& email, 
                      const string& phone, const string& password,
                      const string& role = "customer", const string& address = "") {
@@ -165,16 +172,21 @@ public:
             return false;
         }
         
-        UserData u(id, name, email, phone, password, role, address);
+        UserData u(id, name, email, phone, role, address, password);
         users.insertItem(id, u);
         cout << "User registered successfully. ID: " << id << "\n";
         return true;
     }
+    
+    
+    // Add user without password (for backward compatibility)
     bool addUser(int id, const string& name, const string& email, 
                 const string& phone, const string& role = "customer", 
                 const string& address = "") {
         return registerUser(id, name, email, phone, "", role, address);
     }
+    
+    // Remove user by ID
     bool removeUser(int id) {
         if (users.searchTable(id) == nullptr) {
             cout << "User with ID " << id << " not found.\n";
@@ -185,9 +197,19 @@ public:
         cout << "User " << id << " removed successfully.\n";
         return true;
     }
+    vector<UserData> getAllUsersAsVector() const {
+    vector<UserData> allUsers;
+    users.traverse([&](int id, const UserData& u) {
+        allUsers.push_back(u);
+    });
+    return allUsers;
+}
+    // Get user by ID
     UserData* getUser(int id) {
         return users.searchTable(id);
     }
+    
+    // Get user by email (linear search)
     UserData* getUserByEmail(const string& email) {
         UserData* found = nullptr;
         users.traverse([&](int id, UserData& u) {
@@ -197,6 +219,8 @@ public:
         });
         return found;
     }
+    
+    // Const version for const methods
     const UserData* getUserByEmail(const string& email) const {
         const UserData* found = nullptr;
         users.traverse([&](int id, const UserData& u) {
@@ -206,6 +230,8 @@ public:
         });
         return found;
     }
+    
+    // Authenticate user
     UserData* authenticateUser(const string& email, const string& password) {
         UserData* user = getUserByEmail(email);
         if (user && user->authenticate(password)) {
@@ -213,6 +239,8 @@ public:
         }
         return nullptr;
     }
+    
+    // Update user name
     bool updateUserName(int id, const string& newName) {
         UserData* u = users.searchTable(id);
         if (!u) {
@@ -224,12 +252,16 @@ public:
         cout << "User name updated.\n";
         return true;
     }
+    
+    // Update user email
     bool updateUserEmail(int id, const string& newEmail) {
         UserData* u = users.searchTable(id);
         if (!u) {
             cout << "User not found.\n";
             return false;
         }
+        
+        // Check if email already exists
         UserData* existing = getUserByEmail(newEmail);
         if (existing && existing->id != id) {
             cout << "Email already in use.\n";
@@ -241,6 +273,8 @@ public:
         cout << "User email updated.\n";
         return true;
     }
+    
+    // Update user phone
     bool updateUserPhone(int id, const string& newPhone) {
         UserData* u = users.searchTable(id);
         if (!u) {
@@ -252,6 +286,8 @@ public:
         cout << "User phone updated.\n";
         return true;
     }
+    
+    // Update user address
     bool updateUserAddress(int id, const string& newAddress) {
         UserData* u = users.searchTable(id);
         if (!u) {
@@ -263,12 +299,16 @@ public:
         cout << "User address updated.\n";
         return true;
     }
+    
+    // Update user role
     bool updateUserRole(int id, const string& newRole) {
         UserData* u = users.searchTable(id);
         if (!u) {
             cout << "User not found.\n";
             return false;
         }
+        
+        // Validate role
         if (newRole != "customer" && newRole != "rider" && 
             newRole != "restaurant_owner" && newRole != "admin") {
             cout << "Invalid role. Must be: customer, rider, restaurant_owner, or admin.\n";
@@ -280,6 +320,8 @@ public:
         cout << "User role updated to " << newRole << ".\n";
         return true;
     }
+    
+    // Update user password
     bool updateUserPassword(int id, const string& oldPassword, const string& newPassword) {
         UserData* u = users.searchTable(id);
         if (!u) {
@@ -296,6 +338,8 @@ public:
         cout << "Password updated successfully.\n";
         return true;
     }
+    
+    // Update multiple fields at once
     bool updateUser(int id, const UserData& updates) {
         UserData* u = users.searchTable(id);
         if (!u) {
@@ -308,7 +352,8 @@ public:
             u->name[sizeof(u->name) - 1] = '\0';
         }
         if (strlen(updates.email) > 0) {
-            UserData* existing = getUserByEmail(updates.email);
+            // Check if new email is already in use
+            UserData* existing = getUserByEmail(string(updates.email));
             if (existing && existing->id != id) {
                 cout << "Email already in use.\n";
                 return false;
@@ -336,6 +381,8 @@ public:
         cout << "User profile updated.\n";
         return true;
     }
+    
+    // Print all users (const version)
     void printAllUsers() const {
         cout << "=== All Users ===\n";
         if (users.isEmpty()) {
@@ -353,6 +400,8 @@ public:
         });
         cout << "Total users: " << getTotalUsers() << endl;
     }
+    
+    // Print users by role (const version)
     void printUsersByRole(const string& role) const {
         cout << "=== Users with Role: " << role << " ===\n";
         int count = 0;
@@ -371,6 +420,8 @@ public:
             cout << "Total: " << count << " users.\n";
         }
     }
+    
+    // Get users by role (const version)
     LinkedList<UserData> getUsersByRole(const string& role) const {
         LinkedList<UserData> result;
         users.traverse([&](int id, const UserData& u) {
@@ -380,39 +431,55 @@ public:
         });
         return result;
     }
+    
+    // Get all customers (const version)
     LinkedList<UserData> getAllCustomers() const {
         return getUsersByRole("customer");
     }
+    
+    // Get all riders (const version)
     LinkedList<UserData> getAllRiders() const {
         return getUsersByRole("rider");
     }
+    
+    // Get all restaurant owners (const version)
     LinkedList<UserData> getAllRestaurantOwners() const {
         return getUsersByRole("restaurant_owner");
     }
+    
+    // Get all admins (const version)
     LinkedList<UserData> getAllAdmins() const {
         return getUsersByRole("admin");
     }
-    LinkedList<UserData> searchUsersByName(const string& searchTerm) const {
+    
+    // Search users by name (partial match) - const version
+    LinkedList<UserData> searchUsersByName(const string& searchName) const {
         LinkedList<UserData> result;
-        string searchName = searchTerm;
-        transform(searchName.begin(), searchName.end(), searchName.begin(), ::tolower);
+        string lowerSearch = searchName;
+        transform(lowerSearch.begin(), lowerSearch.end(), lowerSearch.begin(), ::tolower);
         
         users.traverse([&](int id, const UserData& u) {
             string userName = string(u.name);
             transform(userName.begin(), userName.end(), userName.begin(), ::tolower);
             
-            if (userName.find(searchName) != string::npos) {
+            if (userName.find(lowerSearch) != string::npos) {
                 result.insertAtEnd(u);
             }
         });
         return result;
     }
+    
+    // Check if user exists
     bool userExists(int id) const {
         return users.searchTable(id) != nullptr;
     }
+    
+    // Check if email exists (const version)
     bool emailExists(const string& email) const {
         return getUserByEmail(email) != nullptr;
     }
+    
+    // Get total number of users
     int getTotalUsers() const {
         int count = 0;
         users.traverse([&](int id, const UserData& u) {
@@ -420,6 +487,8 @@ public:
         });
         return count;
     }
+    
+    // Get user statistics (const version)
     void printUserStatistics() const {
         int total = 0;
         int customers = 0;
@@ -442,6 +511,73 @@ public:
         cout << "Restaurant Owners: " << owners << "\n";
         cout << "Admins:            " << admins << "\n";
     }
+    
+    // Export users to file
+    void exportUsers(const string& filename) const {
+        ofstream file(filename);
+        if (!file.is_open()) {
+            cout << "Failed to open file for export: " << filename << "\n";
+            return;
+        }
+        
+        int count = 0;
+        users.traverse([&](int id, const UserData& u) {
+            file << u.id << ","
+                 << u.name << ","
+                 << u.email << ","
+                 << u.phone << ","
+                 << u.role << ","
+                 << u.address << ","
+                 << u.password << "\n";
+            count++;
+        });
+        
+        file.close();
+        cout << "Exported " << count << " users to " << filename << "\n";
+    }
+    
+    // Import users from file
+    void importUsers(const string& filename) {
+        ifstream file(filename);
+        if (!file.is_open()) {
+            cout << "Failed to open file for import: " << filename << "\n";
+            return;
+        }
+        
+        string line;
+        int count = 0;
+        
+        while (getline(file, line)) {
+            // Parse CSV line
+            size_t pos = 0;
+            string token;
+            vector<string> tokens;
+            
+            while ((pos = line.find(',')) != string::npos) {
+                token = line.substr(0, pos);
+                tokens.push_back(token);
+                line.erase(0, pos + 1);
+            }
+            tokens.push_back(line); // Last token
+            
+            if (tokens.size() >= 7) {
+                int id = stoi(tokens[0]);
+                registerUser(id, tokens[1], tokens[2], tokens[3], tokens[6], tokens[4], tokens[5]);
+                count++;
+            }
+        }
+        
+        file.close();
+        cout << "Imported " << count << " users from " << filename << "\n";
+    }
+    
+    // Clear all users (for testing)
+    void clearAllUsers() {
+        users.clear();
+        cout << "All users cleared.\n";
+    }
+    
+    // Validate user data
     bool validateUserData(const UserData& user) const {
         if (user.id <= 0) {
             cout << "Invalid user ID.\n";
@@ -457,7 +593,10 @@ public:
             cout << "Email cannot be empty.\n";
             return false;
         }
-        if (strchr(user.email, '@') == nullptr) {
+        
+        // Simple email validation
+        string emailStr(user.email);
+        if (emailStr.find('@') == string::npos) {
             cout << "Invalid email format.\n";
             return false;
         }
@@ -466,22 +605,16 @@ public:
             cout << "Phone cannot be empty.\n";
             return false;
         }
-        string roleStr = string(user.role);
-        if (roleStr != "customer" && roleStr != "rider" && 
-            roleStr != "restaurant_owner" && roleStr != "admin") {
+        
+        // Validate role
+        if (strcmp(user.role, "customer") != 0 && strcmp(user.role, "rider") != 0 && 
+            strcmp(user.role, "restaurant_owner") != 0 && strcmp(user.role, "admin") != 0) {
             cout << "Invalid role.\n";
             return false;
         }
         
         return true;
     }
-vector<UserData> getAllUsersAsVector() const {
-    vector<UserData> allUsers;
-    users.traverse([&](int id, const UserData& u) {
-        allUsers.push_back(u);
-    });
-    return allUsers;
-}
 };
 
 #endif // USER_H

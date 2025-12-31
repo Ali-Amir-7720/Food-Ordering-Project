@@ -4,6 +4,11 @@
 
 #include <iostream>
 #include <memory>
+#include <map>
+#include <vector>
+#include <unordered_map>
+#include <unordered_set>
+#include <climits>
 #include "../models/User.h"
 #include "../models/Restaurant.h"
 #include "../models/MenuItem.h"
@@ -23,6 +28,7 @@
 #include "../services/RoutingService.h"
 #include "../services/RestaurantService.h"
 
+#include "../Database.h"
 using namespace std;
 
 class SystemState {
@@ -51,11 +57,28 @@ private:
     RestaurantService* restaurantService;
     RoutingService* routingService;
     
+    Database* database;
+    
     int nextOrderId;
     int nextUserId;
     int nextRiderId;
     int nextRestaurantId;
     int nextMenuItemId;
+
+    // Helper method to get all restaurants from BTree
+    vector<Restaurant> getAllRestaurantsFromBTree() {
+        vector<Restaurant> restaurantList;
+        
+        // Iterate through all possible restaurant IDs
+        for (int id = 300; id < nextRestaurantId; id++) {
+            Restaurant* r = restaurantService->getRestaurant(id);
+            if (r) {
+                restaurantList.push_back(*r);
+            }
+        }
+        
+        return restaurantList;
+    }
 
 public:
     SystemState() 
@@ -69,9 +92,10 @@ public:
                  [](const Order& a, const Order& b) { return a.id < b.id; },
                  [](const Order& a, const Order& b) { return a.id == b.id; }),
         restaurants("restaurants.dat",
-            [](const Restaurant& a, const Restaurant& b) { return a.restaurantId < b.restaurantId; },
-            [](const Restaurant& a, const Restaurant& b) { return a.restaurantId == b.restaurantId; }),
+            [](const Restaurant& a, const Restaurant& b) { return a.getRestaurantId() < b.getRestaurantId(); },
+            [](const Restaurant& a, const Restaurant& b) { return a.getRestaurantId() == b.getRestaurantId(); }),
           cityGraph(new Graph(100)),
+          database(new Database()),
           nextOrderId(1000),
           nextUserId(100),
           nextRiderId(200),
@@ -85,78 +109,149 @@ public:
         restaurantService = new RestaurantService(&restaurants);
         routingService = new RoutingService(cityGraph);
         
-        initializeSampleData();
+        // Load existing data from database
+        loadFromDatabase();
+        
+        // Only initialize sample data if empty
+        if (restaurants.isEmpty()) {
+            initializeSampleData();
+        }
     }
     
     ~SystemState() {
+        // Save before destroying
+        saveToDatabase();
+        
         delete userService;
         delete riderService;
         delete orderService;
         delete restaurantService;
         delete routingService;
         delete cityGraph;
+        delete database;
+    }
+    
+    // Database Integration
+    void loadFromDatabase() {
+        cout << "Loading restaurants from database...\n";
+        vector<Restaurant> dbRestaurants = database->loadAllRestaurants();
+        
+        for (const auto& restaurant : dbRestaurants) {
+            restaurants.insert(restaurant);
+            if (restaurant.getRestaurantId() >= nextRestaurantId) {
+                nextRestaurantId = restaurant.getRestaurantId() + 1;
+            }
+        }
+        
+        cout << "Loaded " << dbRestaurants.size() << " restaurants from database.\n";
+        
+        // Load menu items
+        vector<MenuItem> dbMenuItems = database->loadAllMenuItems();
+        for (const auto& item : dbMenuItems) {
+            menuItemsCache.insertItem(item.id, item);
+            if (item.id >= nextMenuItemId) {
+                nextMenuItemId = item.id + 1;
+            }
+        }
+        cout << "Loaded " << dbMenuItems.size() << " menu items from database.\n";
+    }
+    
+    void saveToDatabase() {
+        cout << "Saving restaurants to database...\n";
+        
+        // Get all restaurants using helper method
+        vector<Restaurant> restaurantList = getAllRestaurantsFromBTree();
+        
+        // Save to database
+        if (database->saveAllRestaurants(restaurantList)) {
+            cout << "✓ Saved " << restaurantList.size() << " restaurants\n";
+        } else {
+            cout << "✗ Failed to save restaurants\n";
+        }
+        
+        // Save all menu items from database (they're already there from individual saves)
+        vector<MenuItem> menuItemsList = database->loadAllMenuItems();
+        
+        if (!menuItemsList.empty()) {
+            cout << "✓ " << menuItemsList.size() << " menu items already in database\n";
+        }
     }
     
     void initializeSampleData() {
-    // Initialize city graph with sample locations
-    routingService->addRoad(0, 1, 500);   // 500 meters
-    routingService->addRoad(0, 2, 800);
-    routingService->addRoad(1, 3, 600);
-    routingService->addRoad(2, 3, 400);
-    routingService->addRoad(3, 4, 700);
-    
-    // Add sample users
-    userService->addUser(nextUserId++, "John Doe", "john@email.com", 
-                        "1234567890", "customer", "123 Main St");
-    userService->addUser(nextUserId++, "Jane Smith", "jane@email.com", 
-                        "0987654321", "customer", "456 Oak Ave");
-    userService->addUser(nextUserId++, "Mike Rider", "mike@email.com", 
-                        "5551234567", "rider", "789 Pine Rd");
-    
-    // Add sample restaurants
-    Restaurant r1(nextRestaurantId++, "Pizza Palace", "123 Main St", 
-                 "555-1111", "Italian", 0);
-    int restaurantId1 = r1.getRestaurantId();  // Assuming getRestaurantId() exists
-    restaurantService->addRestaurant(r1);
-    
-    Restaurant r2(nextRestaurantId++, "Burger Barn", "456 Oak Ave", 
-                 "555-2222", "American", 2);
-    int restaurantId2 = r2.getRestaurantId();
-    restaurantService->addRestaurant(r2);
-    
-    // Add sample menu items - FIXED: Added restaurantId as last parameter
-    MenuItem pizza1(nextMenuItemId++, "Margherita Pizza", 
-                   "Classic tomato and cheese", 12.99, 50, "main", restaurantId1);
-    restaurantService->addMenuItem(restaurantId1, pizza1);
-    
-    MenuItem pizza2(nextMenuItemId++, "Pepperoni Pizza", 
-                   "Pepperoni with extra cheese", 14.99, 30, "main", restaurantId1);
-    restaurantService->addMenuItem(restaurantId1, pizza2);
-    
-    MenuItem burger1(nextMenuItemId++, "Cheeseburger", 
-                    "Beef patty with cheese", 8.99, 30, "main", restaurantId2);
-    restaurantService->addMenuItem(restaurantId2, burger1);
-    
-    MenuItem fries(nextMenuItemId++, "French Fries", 
-                  "Crispy golden fries", 3.99, 100, "side", restaurantId2);
-    restaurantService->addMenuItem(restaurantId2, fries);
-    
-    // Add sample riders
-    Rider rider1(nextRiderId++, "Mike Rider", "5551234567", "motorcycle", 1);
-    riderService->addRider(rider1);
-    
-    Rider rider2(nextRiderId++, "Sarah Driver", "5559876543", "bike", 3);
-    riderService->addRider(rider2);
-    
-    Rider rider3(nextRiderId++, "Tom Biker", "5551112233", "bike", 4);
-    riderService->addRider(rider3);
-    
-    cout << "System initialized with sample data.\n";
-    cout << "  Users: " << (nextUserId - 100) << "\n";
-    cout << "  Restaurants: " << (nextRestaurantId - 300) << "\n";
-    cout << "  Riders: " << (nextRiderId - 200) << "\n";
-    cout << "  Menu Items: " << (nextMenuItemId - 1000) << "\n";
-}
+        // Initialize city graph with sample locations
+        routingService->addRoad(0, 1, 500);
+        routingService->addRoad(0, 2, 800);
+        routingService->addRoad(1, 3, 600);
+        routingService->addRoad(2, 3, 400);
+        routingService->addRoad(3, 4, 700);
+        
+        // Add sample users
+        userService->addUser(nextUserId++, "John Doe", "john@email.com", 
+                            "1234567890", "customer", "123 Main St");
+        userService->addUser(nextUserId++, "Jane Smith", "jane@email.com", 
+                            "0987654321", "customer", "456 Oak Ave");
+        userService->addUser(nextUserId++, "Mike Rider", "mike@email.com", 
+                            "5551234567", "rider", "789 Pine Rd");
+        
+        // Add sample restaurants
+        Restaurant r1(nextRestaurantId++, "Pizza Palace", "123 Main St", 
+                     "555-1111", "Italian", 0);
+        int restaurantId1 = r1.getRestaurantId();
+        restaurantService->addRestaurant(r1);
+        database->saveRestaurant(r1);
+        
+        Restaurant r2(nextRestaurantId++, "Burger Barn", "456 Oak Ave", 
+                     "555-2222", "American", 2);
+        int restaurantId2 = r2.getRestaurantId();
+        restaurantService->addRestaurant(r2);
+        database->saveRestaurant(r2);
+        
+        // Add sample menu items
+        MenuItem pizza1(nextMenuItemId++, "Margherita Pizza", 
+                       "Classic tomato and cheese", 12.99, 50, "main", restaurantId1);
+        restaurantService->addMenuItem(restaurantId1, pizza1);
+        database->saveMenuItem(pizza1);
+        
+        MenuItem pizza2(nextMenuItemId++, "Pepperoni Pizza", 
+                       "Pepperoni with extra cheese", 14.99, 30, "main", restaurantId1);
+        restaurantService->addMenuItem(restaurantId1, pizza2);
+        database->saveMenuItem(pizza2);
+        
+        MenuItem burger1(nextMenuItemId++, "Cheeseburger", 
+                        "Beef patty with cheese", 8.99, 30, "main", restaurantId2);
+        restaurantService->addMenuItem(restaurantId2, burger1);
+        database->saveMenuItem(burger1);
+        
+        MenuItem fries(nextMenuItemId++, "French Fries", 
+                      "Crispy golden fries", 3.99, 100, "side", restaurantId2);
+        restaurantService->addMenuItem(restaurantId2, fries);
+        database->saveMenuItem(fries);
+        
+        
+       // Create sample riders with email and password
+int nextRiderId = 1;
+
+Rider rider1(nextRiderId++, "Mike Rider", "mike@quickbite.com", "rider123", 
+              "5551234567", "motorcycle", 1);
+riderService->addRider(rider1);
+database->saveRider(rider1);
+
+Rider rider2(nextRiderId++, "Sarah Driver", "sarah@quickbite.com", "delivery456", 
+              "5559876543", "bike", 3);
+riderService->addRider(rider2);
+database->saveRider(rider2);
+
+Rider rider3(nextRiderId++, "Tom Biker", "tom@quickbite.com", "bike789", 
+              "5551112233", "bike", 4);
+riderService->addRider(rider3);
+database->saveRider(rider3);
+        
+        cout << "System initialized with sample data.\n";
+        cout << "  Users: " << (nextUserId - 100) << "\n";
+        cout << "  Restaurants: " << (nextRestaurantId - 300) << "\n";
+        cout << "  Riders: " << (nextRiderId - 200) << "\n";
+        cout << "  Menu Items: " << (nextMenuItemId - 1000) << "\n";
+    }
 
     // ----- User Management -----
     bool registerUser(const string& name, const string& email, const string& phone, 
@@ -199,6 +294,7 @@ public:
         Restaurant r(nextRestaurantId++, name, address, phone, cuisine, locationNode);
         bool success = restaurantService->addRestaurant(r);
         if (success) {
+            database->saveRestaurant(r);
             cout << "Restaurant added successfully. ID: " << (nextRestaurantId - 1) << "\n";
         }
         return success;
@@ -210,39 +306,50 @@ public:
     
     bool updateRestaurant(int restaurantId, const string& name = "", const string& address = "",
                       const string& phone = "", const string& cuisine = "") {
-    Restaurant* r = getRestaurant(restaurantId);
-    if (!r) return false;
-    
-    if (!name.empty()) r->setName(name);
-    if (!address.empty()) r->setAddress(address);
-    if (!phone.empty()) r->setPhone(phone);
-    if (!cuisine.empty()) r->setCuisine(cuisine);
-    
-    return true;
-}
+        Restaurant* r = getRestaurant(restaurantId);
+        if (!r) return false;
+        
+        if (!name.empty()) r->setName(name);
+        if (!address.empty()) r->setAddress(address);
+        if (!phone.empty()) r->setPhone(phone);
+        if (!cuisine.empty()) r->setCuisine(cuisine);
+        
+        database->updateRestaurant(*r);
+        
+        return true;
+    }
     
     bool removeRestaurant(int restaurantId) {
-        return restaurantService->removeRestaurant(restaurantId);
+        bool success = restaurantService->removeRestaurant(restaurantId);
+        if (success) {
+            database->deleteRestaurant(restaurantId);
+        }
+        return success;
     }
     
     // ----- Menu Item Management -----
     bool addMenuItem(int restaurantId, const string& name, const string& description,
                  double price, int stock, const string& category) {
-    // Add restaurantId as the last parameter
-    MenuItem item(nextMenuItemId++, name, description, price, stock, category, restaurantId);
-    bool success = restaurantService->addMenuItem(restaurantId, item);
-    if (success) {
-        cout << "Menu item added successfully. ID: " << (nextMenuItemId - 1) << "\n";
-        // Cache the menu item
-        menuItemsCache.insertItem(item.id, item);
+        MenuItem item(nextMenuItemId++, name, description, price, stock, category, restaurantId);
+        bool success = restaurantService->addMenuItem(restaurantId, item);
+        if (success) {
+            cout << "Menu item added successfully. ID: " << (nextMenuItemId - 1) << "\n";
+            menuItemsCache.insertItem(item.id, item);
+            database->saveMenuItem(item);
+        }
+        return success;
     }
-    return success;
-}
     
     MenuItem* getMenuItem(int restaurantId, int itemId) {
-        Restaurant* r = getRestaurant(restaurantId);
-        if (!r) return nullptr;
-        return r->getMenuItem(itemId);
+        MenuItem* item = menuItemsCache.getItem(itemId);
+        
+        if (!item) return nullptr;
+        
+        if (item->restaurantId == restaurantId) {
+            return item;
+        }
+        
+        return nullptr;
     }
     
     bool updateMenuItemStock(int restaurantId, int itemId, int newStock) {
@@ -258,72 +365,151 @@ public:
     }
 
     // ----- Order Management -----
+    // For backward compatibility - LinkedList version
     int placeOrder(int customerId, int restaurantId, const LinkedList<pair<int, int>>& items,
                    const string& deliveryAddress, int deliveryLocation) {
-        // Create order
-        Order order(nextOrderId++, customerId, restaurantId, deliveryAddress, -1, deliveryLocation);
+        vector<pair<int, int>> itemsVec;
+        auto* currentItem = items.getHead();
+        while (currentItem != nullptr) {
+            itemsVec.push_back(currentItem->data);
+            currentItem = currentItem->next;
+        }
         
-        // Add items to order and check stock
-        Restaurant* restaurant = getRestaurant(restaurantId);
-        if (!restaurant) {
-            cout << "Restaurant not found.\n";
+        map<int, vector<pair<int, int>>> restaurantItems;
+        restaurantItems[restaurantId] = itemsVec;
+        
+        return placeMultiRestaurantOrder(customerId, restaurantItems, deliveryAddress, deliveryLocation);
+    }
+    
+    // Overload for vector input (for convenience)
+    int placeOrder(int customerId, int restaurantId, const vector<pair<int, int>>& itemsVec,
+                   const string& deliveryAddress, int deliveryLocation) {
+        map<int, vector<pair<int, int>>> restaurantItems;
+        restaurantItems[restaurantId] = itemsVec;
+        
+        return placeMultiRestaurantOrder(customerId, restaurantItems, deliveryAddress, deliveryLocation);
+    }
+    
+    // Multi-restaurant order placement
+    int placeMultiRestaurantOrder(int customerId, 
+                                  const map<int, vector<pair<int, int>>>& restaurantItems,
+                                  const string& deliveryAddress, 
+                                  int deliveryLocation) {
+        UserData* customer = userService->getUser(customerId);
+        if (!customer) {
+            cout << "Customer not found.\n";
             return -1;
         }
         
+        // Create order with the multi-restaurant constructor
+        Order order(nextOrderId++, customerId, deliveryAddress, deliveryLocation);
+        
+        double totalAmount = 0.0;
         bool allItemsAvailable = true;
-        auto* currentItem = items.getHead();
-        while (currentItem != nullptr) {
-            int itemId = currentItem->data.first;
-            int quantity = currentItem->data.second;
+        int primaryRestaurantId = -1;
+        
+        // Process items for each restaurant
+        for (const auto& restaurantEntry : restaurantItems) {
+            int restaurantId = restaurantEntry.first;
+            const vector<pair<int, int>>& items = restaurantEntry.second;
             
-            MenuItem* menuItem = restaurant->getMenuItem(itemId);
-            if (!menuItem) {
-                cout << "Item " << itemId << " not found in restaurant menu.\n";
+            Restaurant* restaurant = getRestaurant(restaurantId);
+            if (!restaurant) {
+                cout << "Restaurant " << restaurantId << " not found.\n";
                 allItemsAvailable = false;
                 break;
             }
             
-            if (menuItem->stock < quantity) {
-                cout << "Insufficient stock for item " << itemId 
-                     << ". Available: " << menuItem->stock << ", Requested: " << quantity << "\n";
-                allItemsAvailable = false;
-                break;
+            double restaurantSubtotal = 0.0;
+            
+            // Check stock and add items
+            for (const auto& itemPair : items) {
+                int itemId = itemPair.first;
+                int quantity = itemPair.second;
+                
+                MenuItem* menuItem = menuItemsCache.getItem(itemId);
+                if (!menuItem) {
+                    cout << "Item " << itemId << " not found.\n";
+                    allItemsAvailable = false;
+                    break;
+                }
+                
+                if (menuItem->restaurantId != restaurantId) {
+                    cout << "Item " << itemId << " doesn't belong to restaurant " << restaurantId << "\n";
+                    allItemsAvailable = false;
+                    break;
+                }
+                
+                if (menuItem->stock < quantity) {
+                    cout << "Insufficient stock for item " << itemId 
+                         << " in restaurant " << restaurantId 
+                         << ". Available: " << menuItem->stock << ", Requested: " << quantity << "\n";
+                    allItemsAvailable = false;
+                    break;
+                }
+                
+                order.addItem(restaurantId, itemId, menuItem->name, quantity, menuItem->price);
+                restaurantSubtotal += quantity * menuItem->price;
+                
+                menuItem->stock -= quantity;
+                
+                if (!restaurant->hasMenuItemId(itemId)) {
+                    restaurant->addMenuItemId(itemId);
+                }
             }
             
-            order.addItem(itemId, menuItem->name, quantity, menuItem->price);
-            currentItem = currentItem->next;
+            if (!allItemsAvailable) break;
+            
+            totalAmount += restaurantSubtotal;
+            
+            // Set primary restaurant if not set yet
+            if (primaryRestaurantId == -1) {
+                primaryRestaurantId = restaurantId;
+            }
         }
         
         if (!allItemsAvailable) {
             cout << "Order failed: items unavailable.\n";
+            
+            for (const auto& restaurantEntry : restaurantItems) {
+                const vector<pair<int, int>>& items = restaurantEntry.second;
+                
+                for (const auto& itemPair : items) {
+                    int itemId = itemPair.first;
+                    int quantity = itemPair.second;
+                    
+                    MenuItem* menuItem = menuItemsCache.getItem(itemId);
+                    if (menuItem) {
+                        menuItem->stock += quantity;
+                    }
+                }
+            }
+            
             return -1;
         }
         
-        // Update restaurant stock
-        currentItem = items.getHead();
-        while (currentItem != nullptr) {
-            int itemId = currentItem->data.first;
-            int quantity = currentItem->data.second;
-            restaurant->reduceMenuItemStock(itemId, quantity);
-            currentItem = currentItem->next;
+        order.totalAmount = totalAmount;
+        
+        // Set the primary restaurant ID (first restaurant in the order)
+        if (primaryRestaurantId != -1) {
+            order.restaurantId = primaryRestaurantId;
         }
         
         // Add to order processing pipeline
         orderService->addOrder(order);
         pendingOrders.enqueue(order);
         
-        cout << "Order #" << order.id << " placed successfully. Total: $" << order.totalAmount << "\n";
-        return order.id;
-    }
-    
-    // Overload for vector input (for convenience)
-    int placeOrder(int customerId, int restaurantId, const vector<pair<int, int>>& itemsVec,
-                   const string& deliveryAddress, int deliveryLocation) {
-        LinkedList<pair<int, int>> items;
-        for (const auto& item : itemsVec) {
-            items.insertAtEnd(item);
+        cout << "Order #" << order.id << " placed successfully.\n";
+        if (order.isMultiRestaurant()) {
+            cout << "  Type: Multi-Restaurant\n";
+            cout << "  Restaurants: " << order.restaurantCount << "\n";
+        } else {
+            cout << "  Type: Single Restaurant\n";
+            cout << "  Restaurant: " << order.restaurantId << "\n";
         }
-        return placeOrder(customerId, restaurantId, items, deliveryAddress, deliveryLocation);
+        cout << "  Total: $" << order.totalAmount << "\n";
+        
+        return order.id;
     }
     
     Order* getOrder(int orderId) {
@@ -339,46 +525,56 @@ public:
         
         orderService->updateOrderStatus(orderId, status);
         
+        OrderStatus orderStatus;
+        if (status == "pending") orderStatus = OrderStatus::Pending;
+        else if (status == "confirmed") orderStatus = OrderStatus::Confirmed;
+        else if (status == "preparing") orderStatus = OrderStatus::Preparing;
+        else if (status == "ready") orderStatus = OrderStatus::ReadyForPickup;
+        else if (status == "dispatched") orderStatus = OrderStatus::Dispatched;
+        else if (status == "in_transit") orderStatus = OrderStatus::InTransit;
+        else if (status == "delivered") orderStatus = OrderStatus::Delivered;
+        else if (status == "cancelled") orderStatus = OrderStatus::Cancelled;
+        else {
+            cout << "Invalid status: " << status << "\n";
+            return false;
+        }
+        
+        order->updateStatus(orderStatus);
+        
         // Move through processing pipeline
         if (status == "confirmed") {
-            // Move from pending to preparing
             if (!pendingOrders.isEmpty()) {
                 Order o = pendingOrders.dequeue();
                 preparingOrders.enqueue(o);
                 cout << "Order #" << orderId << " moved to preparing.\n";
             }
         } else if (status == "ready") {
-            // Move from preparing to ready
             if (!preparingOrders.isEmpty()) {
                 Order o = preparingOrders.dequeue();
                 readyOrders.enqueue(o);
                 cout << "Order #" << orderId << " is ready for pickup.\n";
             }
         } else if (status == "dispatched") {
-            // Assign rider and start delivery
             assignRiderToOrder(order);
         } else if (status == "delivered") {
-            // Complete the order
             if (order->riderId != -1) {
                 Rider* rider = riderService->getRider(order->riderId);
                 if (rider) {
                     rider->completeDelivery(true);
                     riderService->updateRiderStatus(order->riderId, "available");
-                    // Add rider back to available queue
                     availableRiders.enqueue(rider, calculateRiderPriority(rider));
                 }
             }
             cout << "Order #" << orderId << " delivered successfully.\n";
         } else if (status == "cancelled") {
-            // Restore stock if order was preparing or ready
-            Restaurant* restaurant = getRestaurant(order->restaurantId);
-            if (restaurant) {
-                // Restore stock for all items
-                for (const auto& item : order->items) {
-                    MenuItem* menuItem = restaurant->getMenuItem(item.itemId);
-                    if (menuItem) {
-                        menuItem->stock += item.quantity;
-                    }
+            // Restore stock
+            for (int i = 0; i < order->itemCount; i++) {
+                int itemId = order->items[i].itemId;
+                int quantity = order->items[i].quantity;
+                
+                MenuItem* menuItem = menuItemsCache.getItem(itemId);
+                if (menuItem) {
+                    menuItem->stock += quantity;
                 }
             }
             cout << "Order #" << orderId << " cancelled.\n";
@@ -400,19 +596,50 @@ public:
     }
 
     // ----- Rider Management -----
-    bool registerRider(const string& name, const string& phone, const string& vehicle, int location) {
-        Rider rider(nextRiderId++, name, phone, vehicle, location);
-        bool success = riderService->addRider(rider);
-        if (success) {
-            cout << "Rider registered successfully. ID: " << (nextRiderId - 1) << "\n";
-            // Add to available riders queue
-            Rider* riderPtr = riderService->getRider(rider.id);
-            if (riderPtr) {
-                availableRiders.enqueue(riderPtr, calculateRiderPriority(riderPtr));
-            }
-        }
-        return success;
+    bool registerRider(const string& name, const string& email, const string& password, 
+                   const string& phone, const string& vehicle, int location) {
+    
+    // Validate inputs
+    if (email.empty() || password.empty()) {
+        cout << "Error: Email and password are required\n";
+        return false;
     }
+    
+    // Check if email already exists
+    if (riderService->findRiderByEmail(email) != nullptr) {
+        cout << "Error: Email already registered\n";
+        return false;
+    }
+    
+    // Create rider with email and password
+    Rider rider(nextRiderId++, name, email, password, phone, vehicle, location);
+    rider.setStatus("Active");  // Default status
+    
+    bool success = riderService->addRider(rider);
+    
+    if (success) {
+        // Save to database
+        database->saveRider(rider);
+        
+        cout << "✓ Rider registered successfully!\n";
+        cout << "  Rider ID: " << (nextRiderId - 1) << "\n";
+        cout << "  Name: " << name << "\n";
+        cout << "  Email: " << email << "\n";
+        cout << "  Status: Active\n";
+        
+        // Add to available riders queue if active
+        Rider* riderPtr = riderService->getRider(rider.id);
+        if (riderPtr) {
+            availableRiders.enqueue(riderPtr, calculateRiderPriority(riderPtr));
+            cout << "  Added to available riders queue\n";
+        }
+        
+        return true;
+    } else {
+        cout << "✗ Failed to register rider\n";
+        return false;
+    }
+}
     
     Rider* getRider(int riderId) {
         return riderService->getRider(riderId);
@@ -423,7 +650,6 @@ public:
         if (success) {
             Rider* rider = getRider(riderId);
             if (rider && rider->status == "available") {
-                // Update priority in queue
                 availableRiders.updatePriority(rider, calculateRiderPriority(rider));
             }
         }
@@ -444,28 +670,16 @@ public:
 
     // ----- Route Planning -----
     vector<int> getDeliveryRoute(int startLocation, int endLocation) {
-    LinkedList<int> linkedPath = routingService->getShortestPath(startLocation, endLocation);
-    vector<int> path;
-    
-    // Method 1: If LinkedList has isEmpty() and removeFront()
-    while (!linkedPath.isEmpty()) {
-        path.push_back(linkedPath.removeFront());
+        LinkedList<int> linkedPath = routingService->getShortestPath(startLocation, endLocation);
+        vector<int> path;
+        
+        while (!linkedPath.isEmpty()) {
+            path.push_back(linkedPath.removeFront());
+        }
+        
+        return path;
     }
     
-    // OR Method 2: If LinkedList has an iterator
-    // for (auto it = linkedPath.begin(); it != linkedPath.end(); ++it) {
-    //     path.push_back(*it);
-    // }
-    
-    // OR Method 3: If LinkedList has toArray() or similar
-    // int* arr = linkedPath.toArray();
-    // for (int i = 0; i < arraySize; i++) {
-    //     path.push_back(arr[i]);
-    // }
-    // delete[] arr;
-    
-    return path;
-}
     int getDeliveryDistance(int startLocation, int endLocation) {
         return routingService->getShortestDistance(startLocation, endLocation);
     }
@@ -487,7 +701,6 @@ private:
     void assignRiderToOrder(Order* order) {
         if (!order) return;
         
-        // Find the best available rider
         Rider* bestRider = riderService->findBestRider(
             order->deliveryLocation, 
             order->deliveryLocation
@@ -497,36 +710,50 @@ private:
             order->assignRider(bestRider->id);
             riderService->updateRiderStatus(bestRider->id, "busy");
             
-            // Remove from available riders queue
             availableRiders.remove(bestRider);
             
-            // Calculate route and estimated time
             vector<int> route = getDeliveryRoute(
                 bestRider->location,
                 order->deliveryLocation
             );
 
-            if (!route.empty()) {  // vector uses empty() not isEmpty()
-    int distance = getDeliveryDistance(
-        bestRider->location,
-        order->deliveryLocation
-    );
-    
-    int estimatedTime = estimateDeliveryTime(distance, bestRider->vehicle);
-    cout << "Rider " << bestRider->name << " (ID: " << bestRider->id 
-         << ") assigned to Order #" << order->id 
-         << ". Estimated delivery time: " << estimatedTime << " minutes.\n";
-    
-    // Print the route - vector doesn't have traverse()
-    cout << "Route: ";
-    for (size_t i = 0; i < route.size(); i++) {
-        cout << route[i];
-        if (i < route.size() - 1) {
-            cout << " -> ";
-        }
-    }
-    cout << " -> Destination\n";
-}
+            if (!route.empty()) {
+                int distance = getDeliveryDistance(
+                    bestRider->location,
+                    order->deliveryLocation
+                );
+                
+                int estimatedTime = estimateDeliveryTime(distance, bestRider->vehicle);
+                cout << "Rider " << bestRider->name << " (ID: " << bestRider->id 
+                     << ") assigned to Order #" << order->id 
+                     << ". Estimated delivery time: " << estimatedTime << " minutes.\n";
+                
+                cout << "Route: ";
+                for (size_t i = 0; i < route.size(); i++) {
+                    cout << route[i];
+                    if (i < route.size() - 1) {
+                        cout << " -> ";
+                    }
+                }
+                cout << " -> Destination\n";
+                
+                // For multi-restaurant orders, show restaurant list
+                if (order->isMultiRestaurant()) {
+                    cout << "Restaurants in Order #" << order->id << ": ";
+                    for (int i = 0; i < order->restaurantCount; i++) {
+                        Restaurant* restaurant = getRestaurant(order->restaurantIds[i]);
+                        if (restaurant) {
+                            cout << restaurant->getName();
+                        } else {
+                            cout << "Restaurant " << order->restaurantIds[i];
+                        }
+                        if (i < order->restaurantCount - 1) {
+                            cout << " → ";
+                        }
+                    }
+                    cout << "\n";
+                }
+            }
         } else {
             cout << "No available riders for Order #" << order->id << "\n";
         }
@@ -535,12 +762,23 @@ private:
     int calculateRiderPriority(Rider* rider) {
         if (!rider) return 1000;
         
-        // Lower number = higher priority
-        // Factors: rating (higher is better), completed deliveries (more is better)
         int priority = 100 - (int)(rider->rating * 10);
-        priority -= rider->completedDeliveries / 10; // More deliveries = slightly higher priority
+        priority -= rider->completedDeliveries / 10;
         
-        return max(1, priority); // Ensure positive priority
+        return max(1, priority);
+    }
+    
+    // Helper to get restaurant IDs from an order
+    vector<int> getOrderRestaurantIds(const Order& order) {
+        vector<int> restaurantIds;
+        if (order.isMultiRestaurant()) {
+            for (int i = 0; i < order.restaurantCount; i++) {
+                restaurantIds.push_back(order.restaurantIds[i]);
+            }
+        } else {
+            restaurantIds.push_back(order.restaurantId);
+        }
+        return restaurantIds;
     }
 
 public:
@@ -556,14 +794,14 @@ public:
     }
     
     void printRestaurantMenu(int restaurantId) {
-    Restaurant* r = getRestaurant(restaurantId);
-    if (r) {
-        cout << "=== Menu for " << r->getName() << " ===\n";
-        r->printMenu();
-    } else {
-        cout << "Restaurant not found.\n";
+        Restaurant* r = getRestaurant(restaurantId);
+        if (r) {
+            cout << "=== Menu for " << r->getName() << " ===\n";
+            r->printMenu();
+        } else {
+            cout << "Restaurant not found.\n";
+        }
     }
-}
 
     void printAllOrders() {
         cout << "=== All Orders ===\n";
@@ -591,31 +829,36 @@ public:
     
     void printPendingOrders() {
         cout << "=== Pending Orders (" << pendingOrders.size() << ") ===\n";
-        pendingOrders.traverse([](const Order& o) {
+        Queue<Order> tempQueue = pendingOrders;
+        while (!tempQueue.isEmpty()) {
+            Order o = tempQueue.dequeue();
             cout << "Order #" << o.id << " - Customer: " << o.customerId 
                  << " - Total: $" << o.totalAmount << "\n";
-        });
+        }
     }
     
     void printPreparingOrders() {
         cout << "=== Preparing Orders (" << preparingOrders.size() << ") ===\n";
-        preparingOrders.traverse([](const Order& o) {
+        Queue<Order> tempQueue = preparingOrders;
+        while (!tempQueue.isEmpty()) {
+            Order o = tempQueue.dequeue();
             cout << "Order #" << o.id << " - Customer: " << o.customerId 
-                 << " - Restaurant: " << o.restaurantId << "\n";
-        });
+                 << " - Restaurants: " << (o.isMultiRestaurant() ? o.restaurantCount : 1) << "\n";
+        }
     }
     
     void printReadyOrders() {
         cout << "=== Ready Orders (" << readyOrders.size() << ") ===\n";
-        readyOrders.traverse([](const Order& o) {
+        Queue<Order> tempQueue = readyOrders;
+        while (!tempQueue.isEmpty()) {
+            Order o = tempQueue.dequeue();
             cout << "Order #" << o.id << " - Customer: " << o.customerId 
-                 << " - Ready for pickup at Restaurant: " << o.restaurantId << "\n";
-        });
+                 << " - Ready for pickup\n";
+        }
     }
     
     void printAvailableRidersQueue() {
         cout << "=== Available Riders Queue (" << availableRiders.size() << ") ===\n";
-        // Note: PriorityQueue doesn't have traverse, so we need to copy
         PriorityQueue<Rider*> tempQueue = availableRiders;
         int count = 1;
         while (!tempQueue.isEmpty()) {
@@ -690,16 +933,11 @@ public:
     
     // ----- System Control -----
     void clearAllData() {
-        // Clear queues
         while (!pendingOrders.isEmpty()) pendingOrders.dequeue();
         while (!preparingOrders.isEmpty()) preparingOrders.dequeue();
         while (!readyOrders.isEmpty()) readyOrders.dequeue();
         
-        // Clear priority queue
         while (!availableRiders.isEmpty()) availableRiders.dequeue();
-        
-        // Clear cache
-        // (Would need clear method in HashTable)
         
         cout << "System data cleared (except persistent storage).\n";
     }
@@ -707,53 +945,62 @@ public:
     void resetSystem() {
         clearAllData();
         
-        // Reset IDs
         nextOrderId = 1000;
         nextUserId = 100;
         nextRiderId = 200;
         nextRestaurantId = 300;
         nextMenuItemId = 1000;
         
-        // Reinitialize sample data
         initializeSampleData();
         
         cout << "System reset to initial state.\n";
     }
     
-    // ----- Test Methods -----
-    void runTestScenario() {
-        cout << "\n" << string(50, '=') << "\n";
-        cout << "        RUNNING TEST SCENARIO\n";
-        cout << string(50, '=') << "\n";
+    // ----- Export Methods for DatabaseManager Integration -----
+    vector<Restaurant> exportRestaurants() {
+        cout << "DEBUG: Exporting restaurants from SystemState...\n";
+        vector<Restaurant> restaurantList = getAllRestaurantsFromBTree();
+        cout << "DEBUG: Found " << restaurantList.size() << " restaurants in SystemState\n";
+        return restaurantList;
+    }
+    
+    vector<Order> exportOrders() {
+        cout << "DEBUG: Exporting orders from SystemState...\n";
+        vector<Order> orderList;
         
-        // 1. Place an order
-        cout << "\n1. Placing a test order...\n";
-        LinkedList<pair<int, int>> items;
-        items.insertAtEnd(make_pair(1000, 2)); // 2x Margherita Pizza
-        items.insertAtEnd(make_pair(1001, 1)); // 1x Pepperoni Pizza
-        
-        int orderId = placeOrder(100, 300, items, "123 Test St", 4);
-        
-        if (orderId != -1) {
-            // 2. Confirm the order
-            cout << "\n2. Confirming order...\n";
-            updateOrderStatus(orderId, "confirmed");
-            
-            // 3. Mark as ready
-            cout << "\n3. Marking order as ready...\n";
-            updateOrderStatus(orderId, "ready");
-            
-            // 4. Dispatch with rider
-            cout << "\n4. Dispatching order...\n";
-            updateOrderStatus(orderId, "dispatched");
-            
-            // 5. Mark as delivered
-            cout << "\n5. Delivering order...\n";
-            updateOrderStatus(orderId, "delivered");
+        // Collect from all order IDs
+        for (int id = 1000; id < nextOrderId; id++) {
+            Order* order = orderService->getOrder(id);
+            if (order) {
+                orderList.push_back(*order);
+            }
         }
         
-        cout << "\nTest scenario completed.\n";
-        cout << string(50, '=') << "\n\n";
+        cout << "DEBUG: Found " << orderList.size() << " orders\n";
+        return orderList;
+    }
+    
+    vector<Rider> exportRiders() {
+        cout << "DEBUG: Exporting riders from SystemState...\n";
+        vector<Rider> riderList;
+        
+        // Collect from all rider IDs
+        for (int id = 200; id < nextRiderId; id++) {
+            Rider* rider = riderService->getRider(id);
+            if (rider) {
+                riderList.push_back(*rider);
+            }
+        }
+        
+        cout << "DEBUG: Found " << riderList.size() << " riders\n";
+        return riderList;
+    }
+    
+    vector<MenuItem> exportMenuItems() {
+        cout << "DEBUG: Exporting menu items from SystemState...\n";
+        vector<MenuItem> menuItemsList = database->loadAllMenuItems();
+        cout << "DEBUG: Found " << menuItemsList.size() << " menu items\n";
+        return menuItemsList;
     }
 };
 

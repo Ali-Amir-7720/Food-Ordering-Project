@@ -4,6 +4,8 @@
 
 #include <iostream>
 #include <string>
+#include <cstring>
+#include <vector>
 #include "../models/User.h"
 #include "../dataStructures/BTree.h"
 
@@ -37,12 +39,12 @@ public:
         for (const auto& user : allUsers) {
             userManager.registerUser(
                 user.id,
-                user.name,
-                user.email,
-                user.phone,
-                user.password,
-                user.role,
-                user.address
+                string(user.name),
+                string(user.email),
+                string(user.phone),
+                string(user.password),
+                string(user.role),
+                string(user.address)
             );
         }
         
@@ -157,12 +159,12 @@ public:
                 UserData persistentUser = result.second[0]; // Get first match
                 userManager.registerUser(
                     persistentUser.id,
-                    persistentUser.name,
-                    persistentUser.email,
-                    persistentUser.phone,
-                    persistentUser.password,
-                    persistentUser.role,
-                    persistentUser.address
+                    string(persistentUser.name),
+                    string(persistentUser.email),
+                    string(persistentUser.phone),
+                    string(persistentUser.password),
+                    string(persistentUser.role),
+                    string(persistentUser.address)
                 );
                 
                 // Return from cache
@@ -192,24 +194,45 @@ public:
             return false;
         }
         
-        // Create updated user data
+        // Create updated user data (copy current data)
         UserData updatedUser = *currentUser;
         
-        // Apply updates
-        if (!updates.name.empty()) updatedUser.name = updates.name;
-        if (!updates.email.empty()) {
+        // Apply updates (check if field is not empty before updating)
+        if (strlen(updates.name) > 0) {
+            strncpy(updatedUser.name, updates.name, sizeof(updatedUser.name) - 1);
+            updatedUser.name[sizeof(updatedUser.name) - 1] = '\0';
+        }
+        
+        if (strlen(updates.email) > 0) {
             // Check if new email is already in use by another user
-            UserData* existing = getUserByEmail(updates.email);
+            UserData* existing = getUserByEmail(string(updates.email));
             if (existing && existing->id != id) {
                 cout << "Email already in use by another user.\n";
                 return false;
             }
-            updatedUser.email = updates.email;
+            strncpy(updatedUser.email, updates.email, sizeof(updatedUser.email) - 1);
+            updatedUser.email[sizeof(updatedUser.email) - 1] = '\0';
         }
-        if (!updates.phone.empty()) updatedUser.phone = updates.phone;
-        if (!updates.address.empty()) updatedUser.address = updates.address;
-        if (!updates.role.empty()) updatedUser.role = updates.role;
-        if (!updates.password.empty()) updatedUser.password = updates.password;
+        
+        if (strlen(updates.phone) > 0) {
+            strncpy(updatedUser.phone, updates.phone, sizeof(updatedUser.phone) - 1);
+            updatedUser.phone[sizeof(updatedUser.phone) - 1] = '\0';
+        }
+        
+        if (strlen(updates.address) > 0) {
+            strncpy(updatedUser.address, updates.address, sizeof(updatedUser.address) - 1);
+            updatedUser.address[sizeof(updatedUser.address) - 1] = '\0';
+        }
+        
+        if (strlen(updates.role) > 0) {
+            strncpy(updatedUser.role, updates.role, sizeof(updatedUser.role) - 1);
+            updatedUser.role[sizeof(updatedUser.role) - 1] = '\0';
+        }
+        
+        if (strlen(updates.password) > 0) {
+            strncpy(updatedUser.password, updates.password, sizeof(updatedUser.password) - 1);
+            updatedUser.password[sizeof(updatedUser.password) - 1] = '\0';
+        }
         
         // Validate updated data
         if (!userManager.validateUserData(updatedUser)) {
@@ -220,12 +243,12 @@ public:
         userManager.removeUser(id);
         bool cacheSuccess = userManager.registerUser(
             updatedUser.id,
-            updatedUser.name,
-            updatedUser.email,
-            updatedUser.phone,
-            updatedUser.password,
-            updatedUser.role,
-            updatedUser.address
+            string(updatedUser.name),
+            string(updatedUser.email),
+            string(updatedUser.phone),
+            string(updatedUser.password),
+            string(updatedUser.role),
+            string(updatedUser.address)
         );
         
         if (!cacheSuccess) {
@@ -233,12 +256,12 @@ public:
             // Restore old user
             userManager.registerUser(
                 currentUser->id,
-                currentUser->name,
-                currentUser->email,
-                currentUser->phone,
-                currentUser->password,
-                currentUser->role,
-                currentUser->address
+                string(currentUser->name),
+                string(currentUser->email),
+                string(currentUser->phone),
+                string(currentUser->password),
+                string(currentUser->role),
+                string(currentUser->address)
             );
             return false;
         }
@@ -266,31 +289,36 @@ public:
     // Update specific user fields
     bool updateUserName(int id, const string& newName) {
         UserData updates;
-        updates.name = newName;
+        strncpy(updates.name, newName.c_str(), sizeof(updates.name) - 1);
+        updates.name[sizeof(updates.name) - 1] = '\0';
         return updateUser(id, updates);
     }
     
     bool updateUserEmail(int id, const string& newEmail) {
         UserData updates;
-        updates.email = newEmail;
+        strncpy(updates.email, newEmail.c_str(), sizeof(updates.email) - 1);
+        updates.email[sizeof(updates.email) - 1] = '\0';
         return updateUser(id, updates);
     }
     
     bool updateUserPhone(int id, const string& newPhone) {
         UserData updates;
-        updates.phone = newPhone;
+        strncpy(updates.phone, newPhone.c_str(), sizeof(updates.phone) - 1);
+        updates.phone[sizeof(updates.phone) - 1] = '\0';
         return updateUser(id, updates);
     }
     
     bool updateUserAddress(int id, const string& newAddress) {
         UserData updates;
-        updates.address = newAddress;
+        strncpy(updates.address, newAddress.c_str(), sizeof(updates.address) - 1);
+        updates.address[sizeof(updates.address) - 1] = '\0';
         return updateUser(id, updates);
     }
     
     bool updateUserRole(int id, const string& newRole) {
         UserData updates;
-        updates.role = newRole;
+        strncpy(updates.role, newRole.c_str(), sizeof(updates.role) - 1);
+        updates.role[sizeof(updates.role) - 1] = '\0';
         return updateUser(id, updates);
     }
     
@@ -368,7 +396,7 @@ public:
         cout << "Syncing cache with persistent storage...\n";
         
         // Clear cache
-        // (Would need clear method in UserManager)
+        userManager.clearAllUsers();
         
         // Reload from persistent storage
         loadUsersFromPersistentStorage();
@@ -391,7 +419,7 @@ public:
     // Clear all users (for testing)
     void clearAllUsers() {
         // Clear cache
-        // (Would need clear method in UserManager)
+        userManager.clearAllUsers();
         
         // Clear persistent storage
         if (persistentUsers) {
